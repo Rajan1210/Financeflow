@@ -1,0 +1,6 @@
+{
+  "name": "FinPulse",
+  "description": "Personal finance and automated SMS transaction manager with smart analytics, budgets, and investments",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

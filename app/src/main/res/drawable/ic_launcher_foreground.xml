@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="0"
+        android:translateY="0">
+        <!-- Outer shield glowing outline -->
+        <path
+            android:pathData="M54,26 C66,26 76,33 76,43 C76,61 57,75 54,78 C51,75 32,61 32,43 C32,33 42,26 54,26 Z"
+            android:strokeWidth="2.5"
+            android:strokeColor="#34D399"
+            android:fillColor="#152E35" />
+            
+        <!-- Upward trending financial pulse graph inside shield -->
+        <path
+            android:pathData="M38,55 L46,47 L52,51 L62,39 L68,43"
+            android:strokeWidth="3.5"
+            android:strokeColor="#10B981"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+
+        <!-- Upward Arrowhead -->
+        <path
+            android:pathData="M64,37 L70,37 L70,43"
+            android:strokeWidth="3.5"
+            android:strokeColor="#10B981"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+
+        <!-- Accent dots / nodes -->
+        <path
+            android:pathData="M46,47 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0"
+            android:fillColor="#A7F3D0" />
+        <path
+            android:pathData="M52,51 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0"
+            android:fillColor="#A7F3D0" />
+        <path
+            android:pathData="M62,39 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0"
+            android:fillColor="#6EE7B7" />
+
+        <!-- Rupee / Currency pulse emblem in bottom center -->
+        <path
+            android:pathData="M48,63 L60,63 M48,66 L58,66 M52,66 C56,66 57,69 55,71 L51,71 L57,76"
+            android:strokeWidth="1.8"
+            android:strokeColor="#E2E8F0"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>
