@@ -38,18 +38,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.entity.AccountEntity
+import com.example.data.statement.ParsedStatementRow
 import com.example.data.statement.PdfExtractResult
 import com.example.data.statement.PdfExtractorHelper
+import com.example.data.statement.StatementParserUtils
 import com.example.domain.model.BankType
+import com.example.domain.model.TransactionType
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class UploadStep {
     SELECT_BANK,
     SELECT_ACCOUNT,
     PICK_AND_EXTRACT,
-    EXTRACTED_SUCCESS
+    PREVIEW_TRANSACTIONS,
+    AI_FALLBACK
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +94,12 @@ fun StatementUploadScreen(
     var extractedTextResult by remember { mutableStateOf<String?>(null) }
     var extractedPageCount by remember { mutableIntStateOf(0) }
 
+    // Parsed Transactions & Deduplication State
+    var parsedRowsResult by remember { mutableStateOf<List<ParsedStatementRow>>(emptyList()) }
+    var duplicateRowsCount by remember { mutableIntStateOf(0) }
+    var selectedRowIndices by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var isImportingTransactions by remember { mutableStateOf(false) }
+
     // Function to run extraction
     fun processExtraction(bytes: ByteArray, password: String? = null) {
         coroutineScope.launch {
@@ -102,12 +115,24 @@ fun StatementUploadScreen(
                     passwordError = null
                     extractedTextResult = result.text
                     extractedPageCount = result.pageCount
-                    currentStep = UploadStep.EXTRACTED_SUCCESS
 
                     val bank = selectedBank ?: BankType.OTHER
                     val account = selectedAccount
                     if (account != null && onTextExtracted != null) {
                         onTextExtracted(bank, account, result.text)
+                    }
+
+                    // Parse transactions with StatementParserRouter via ViewModel
+                    val parsedRows = viewModel.parseStatementText(bank, result.text)
+                    if (parsedRows.isEmpty()) {
+                        // Automatically navigate to AI fallback screen if parser finds 0 rows
+                        currentStep = UploadStep.AI_FALLBACK
+                    } else {
+                        val (nonDuplicates, duplicates) = viewModel.filterDuplicateStatementRows(parsedRows)
+                        parsedRowsResult = nonDuplicates
+                        duplicateRowsCount = duplicates
+                        selectedRowIndices = nonDuplicates.indices.toSet()
+                        currentStep = UploadStep.PREVIEW_TRANSACTIONS
                     }
                 }
                 is PdfExtractResult.PasswordRequired -> {
@@ -172,7 +197,8 @@ fun StatementUploadScreen(
                                 UploadStep.SELECT_BANK -> onBack()
                                 UploadStep.SELECT_ACCOUNT -> currentStep = UploadStep.SELECT_BANK
                                 UploadStep.PICK_AND_EXTRACT -> currentStep = UploadStep.SELECT_ACCOUNT
-                                UploadStep.EXTRACTED_SUCCESS -> onBack()
+                                UploadStep.PREVIEW_TRANSACTIONS -> currentStep = UploadStep.PICK_AND_EXTRACT
+                                UploadStep.AI_FALLBACK -> currentStep = UploadStep.PICK_AND_EXTRACT
                             }
                         },
                         modifier = Modifier.testTag("statement_back_button")
@@ -272,20 +298,62 @@ fun StatementUploadScreen(
                             }
                         )
                     }
-                    UploadStep.EXTRACTED_SUCCESS -> {
-                        ExtractedSuccessView(
+                    UploadStep.PREVIEW_TRANSACTIONS -> {
+                        val account = selectedAccount
+                        StatementPreviewListView(
                             bank = selectedBank ?: BankType.OTHER,
-                            account = selectedAccount,
-                            pageCount = extractedPageCount,
-                            charCount = extractedTextResult?.length ?: 0,
-                            samplePreview = extractedTextResult?.take(500) ?: "",
+                            account = account,
+                            rows = parsedRowsResult,
+                            duplicateCount = duplicateRowsCount,
+                            selectedIndices = selectedRowIndices,
+                            onToggleRow = { index ->
+                                selectedRowIndices = if (selectedRowIndices.contains(index)) {
+                                    selectedRowIndices - index
+                                } else {
+                                    selectedRowIndices + index
+                                }
+                            },
+                            onToggleSelectAll = {
+                                selectedRowIndices = if (selectedRowIndices.size == parsedRowsResult.size) {
+                                    emptySet()
+                                } else {
+                                    parsedRowsResult.indices.toSet()
+                                }
+                            },
+                            onConfirmImport = {
+                                if (account != null) {
+                                    val rowsToImport = parsedRowsResult.filterIndexed { idx, _ -> selectedRowIndices.contains(idx) }
+                                    isImportingTransactions = true
+                                    viewModel.confirmStatementImport(account, rowsToImport) {
+                                        isImportingTransactions = false
+                                        onBack()
+                                    }
+                                }
+                            },
+                            onTryAiFallback = {
+                                currentStep = UploadStep.AI_FALLBACK
+                            },
+                            isImporting = isImportingTransactions,
                             onUploadAnother = {
                                 selectedPdfBytes = null
                                 selectedPdfFileName = null
                                 extractedTextResult = null
+                                parsedRowsResult = emptyList()
                                 currentStep = UploadStep.SELECT_BANK
                             }
                         )
+                    }
+                    UploadStep.AI_FALLBACK -> {
+                        val account = selectedAccount
+                        if (account != null) {
+                            AiFallbackImportScreen(
+                                viewModel = viewModel,
+                                account = account,
+                                rawExtractedText = extractedTextResult,
+                                onBack = { currentStep = UploadStep.PICK_AND_EXTRACT },
+                                onSuccessImport = onBack
+                            )
+                        }
                     }
                 }
             }
@@ -487,12 +555,12 @@ fun StatementUploadScreen(
 
 @Composable
 private fun StepProgressBar(currentStep: UploadStep) {
-    val steps = listOf("1. Bank", "2. Account", "3. PDF File", "4. Extract")
+    val steps = listOf("1. Bank", "2. Account", "3. PDF File", "4. Preview & Import")
     val activeIndex = when (currentStep) {
         UploadStep.SELECT_BANK -> 0
         UploadStep.SELECT_ACCOUNT -> 1
         UploadStep.PICK_AND_EXTRACT -> 2
-        UploadStep.EXTRACTED_SUCCESS -> 3
+        UploadStep.PREVIEW_TRANSACTIONS, UploadStep.AI_FALLBACK -> 3
     }
 
     Row(
@@ -948,76 +1016,220 @@ private fun PdfUploadView(
 }
 
 @Composable
-private fun ExtractedSuccessView(
+private fun StatementPreviewListView(
     bank: BankType,
     account: AccountEntity?,
-    pageCount: Int,
-    charCount: Int,
-    samplePreview: String,
+    rows: List<ParsedStatementRow>,
+    duplicateCount: Int,
+    selectedIndices: Set<Int>,
+    onToggleRow: (Int) -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onConfirmImport: () -> Unit,
+    onTryAiFallback: () -> Unit,
+    isImporting: Boolean,
     onUploadAnother: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(16.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(IncomeGreen.copy(alpha = 0.2f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.CheckCircle,
-                contentDescription = "Success",
-                tint = IncomeGreen,
-                modifier = Modifier.size(48.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "PDF Extracted Successfully!",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = "Extracted $pageCount pages ($charCount characters) for ${bank.displayName}.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
+        // Summary Header Card
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${bank.displayName} • ${account?.name ?: "Account"}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${rows.size} transactions parsed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    FilledTonalButton(
+                        onClick = onTryAiFallback,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("try_ai_fallback_btn")
+                    ) {
+                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("AI Import", fontSize = 12.sp)
+                    }
+                }
+
+                if (duplicateCount > 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.tertiaryContainer)
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "$duplicateCount duplicate transaction(s) already exist and were skipped.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Select All / Deselect All Controls
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${selectedIndices.size} of ${rows.size} selected",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            TextButton(
+                onClick = onToggleSelectAll,
+                modifier = Modifier.testTag("toggle_select_all_btn")
+            ) {
+                Text(if (selectedIndices.size == rows.size) "Deselect All" else "Select All")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Transaction Rows Preview List
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            items(rows.indices.toList()) { index ->
+                val row = rows[index]
+                val isChecked = selectedIndices.contains(index)
+                val category = StatementParserUtils.categorize(row.description)
+                val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(row.date))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("statement_row_$index"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isChecked) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ),
+                    border = if (isChecked) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)) else null
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = isChecked,
+                            onCheckedChange = { onToggleRow(index) },
+                            modifier = Modifier.testTag("checkbox_row_$index")
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = row.description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = dateFormatted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = category.displayName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (!row.referenceId.isNullOrBlank()) {
+                                Text(
+                                    text = "Ref: ${row.referenceId}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "${if (row.type == TransactionType.EXPENSE) "-" else "+"}₹${String.format(Locale.getDefault(), "%,.2f", row.amount)}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (row.type == TransactionType.EXPENSE) ExpenseRed else IncomeGreen
+                            )
+                            Text(
+                                text = if (row.type == TransactionType.EXPENSE) "DEBIT" else "CREDIT",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (row.type == TransactionType.EXPENSE) ExpenseRed else IncomeGreen
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Confirm Button
+        Button(
+            onClick = onConfirmImport,
+            enabled = selectedIndices.isNotEmpty() && !isImporting,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .testTag("confirm_statement_import_btn")
+        ) {
+            if (isImporting) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Icon(Icons.Filled.Done, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Statement Raw Text Sample:",
-                    style = MaterialTheme.typography.labelMedium,
+                    text = "Add ${selectedIndices.size} Transactions",
                     fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = samplePreview.ifBlank { "No text content found." },
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 15,
-                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedButton(
             onClick = onUploadAnother,

@@ -7,12 +7,18 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.*
 import com.example.data.repository.FinanceRepository
+import com.example.data.statement.ParsedStatementRow
+import com.example.data.statement.PastedListParser
+import com.example.data.statement.PastedParseResult
+import com.example.data.statement.StatementParserRouter
+import com.example.data.statement.StatementParserUtils
 import com.example.domain.model.BankType
 import com.example.domain.model.InvestmentType
 import com.example.domain.model.TransactionCategory
 import com.example.domain.model.TransactionType
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -575,6 +581,86 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // --- Statement Import (Task B, C, D) ---
+
+    fun parseStatementText(bank: BankType, text: String): List<ParsedStatementRow> {
+        return StatementParserRouter.parse(bank, text)
+    }
+
+    fun parsePastedAiOutput(text: String): PastedParseResult {
+        return PastedListParser.parse(text)
+    }
+
+    fun computeDedupHash(row: ParsedStatementRow): String {
+        val raw = "${row.date}_${"%.2f".format(Locale.US, row.amount)}_${row.type.name}_${row.referenceId ?: row.description.trim()}"
+        val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun filterDuplicateStatementRows(rows: List<ParsedStatementRow>): Pair<List<ParsedStatementRow>, Int> {
+        val existing = allTransactions.value
+        val existingHashes = existing.mapNotNull { it.smsHash }.toSet()
+        val nonDuplicates = mutableListOf<ParsedStatementRow>()
+        var duplicatesCount = 0
+
+        for (row in rows) {
+            val hash = computeDedupHash(row)
+            val isDuplicate = existingHashes.contains(hash) || existing.any { tx ->
+                tx.date == row.date &&
+                Math.abs(tx.amount - row.amount) < 0.001 &&
+                tx.type == row.type &&
+                ((row.referenceId != null && tx.referenceId == row.referenceId) ||
+                 tx.description.equals(row.description, ignoreCase = true))
+            }
+            if (isDuplicate) {
+                duplicatesCount++
+            } else {
+                nonDuplicates.add(row)
+            }
+        }
+        return Pair(nonDuplicates, duplicatesCount)
+    }
+
+    fun confirmStatementImport(
+        account: AccountEntity,
+        rows: List<ParsedStatementRow>,
+        onComplete: (Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            var insertedCount = 0
+            val existing = allTransactions.value
+            val existingHashes = existing.mapNotNull { it.smsHash }.toSet()
+
+            for (row in rows) {
+                val hash = computeDedupHash(row)
+                if (existingHashes.contains(hash)) {
+                    continue
+                }
+
+                val category = StatementParserUtils.categorize(row.description)
+                val tx = TransactionEntity(
+                    amount = row.amount,
+                    type = row.type,
+                    category = category,
+                    merchant = row.description.take(40),
+                    description = row.description,
+                    date = row.date,
+                    bank = account.name,
+                    accountId = account.id,
+                    referenceId = row.referenceId,
+                    isFromSms = true,
+                    smsHash = hash
+                )
+                val id = repository.insertTransaction(tx)
+                if (id > 0) {
+                    insertedCount++
+                }
+            }
+
+            _toastMessage.emit("Successfully imported $insertedCount transactions to ${account.name}")
+            onComplete(insertedCount)
+        }
+    }
 
     // PIN & Security
     fun setPin(pin: String) {

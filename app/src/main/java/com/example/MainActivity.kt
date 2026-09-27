@@ -136,7 +136,10 @@ fun MainAppScaffold(
                 )
                 AppNavDestination.STATEMENT_UPLOAD -> StatementUploadScreen(
                     viewModel = viewModel,
-                    onBack = { currentDestination = AppNavDestination.DASHBOARD }
+                    onBack = { currentDestination = AppNavDestination.DASHBOARD },
+                    onTextExtracted = { bank, account, text ->
+                        viewModel.parseStatementText(bank, text)
+                    }
                 )
             }
         }
