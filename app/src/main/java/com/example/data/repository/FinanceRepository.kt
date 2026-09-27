@@ -3,10 +3,6 @@ package com.example.data.repository
 import android.content.Context
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.*
-import com.example.data.sms.ParsedSmsResult
-import com.example.data.sms.SmsReaderHelper
-import com.example.data.sms.SmsSyncReport
-import com.example.data.sms.SmsTransactionParser
 import com.example.domain.model.BankType
 import com.example.domain.model.InvestmentType
 import com.example.domain.model.TransactionCategory
@@ -173,7 +169,7 @@ class FinanceRepository(private val database: AppDatabase) {
 
     suspend fun setPin(pin: String) {
         val current = userProfileDao.getUserProfile().first() ?: UserProfileEntity()
-        val hash = hashPin(pin)
+        val hash = com.example.data.security.PinSecurityHelper.hashPin(pin)
         userProfileDao.insertOrUpdateProfile(
             current.copy(
                 pinHash = hash,
@@ -182,10 +178,36 @@ class FinanceRepository(private val database: AppDatabase) {
         )
     }
 
+    suspend fun linkFirebaseUser(uid: String, email: String) {
+        val current = userProfileDao.getUserProfile().first() ?: UserProfileEntity()
+        userProfileDao.insertOrUpdateProfile(
+            current.copy(
+                firebaseUid = uid,
+                email = email,
+                username = if (current.username.isBlank() || current.username == "User") {
+                    email.substringBefore("@").replaceFirstChar { it.uppercase() }
+                } else current.username
+            )
+        )
+    }
+
+    suspend fun clearFirebaseUser() {
+        val current = userProfileDao.getUserProfile().first() ?: return
+        userProfileDao.insertOrUpdateProfile(
+            current.copy(
+                firebaseUid = null
+            )
+        )
+    }
+
     suspend fun verifyPin(pin: String): Boolean {
         val current = userProfileDao.getUserProfile().first() ?: return false
-        val hash = hashPin(pin)
-        return current.pinHash == hash
+        val isValid = com.example.data.security.PinSecurityHelper.verifyPin(pin, current.pinHash)
+        if (isValid && com.example.data.security.PinSecurityHelper.isLegacyHash(current.pinHash)) {
+            val newHash = com.example.data.security.PinSecurityHelper.hashPin(pin)
+            userProfileDao.insertOrUpdateProfile(current.copy(pinHash = newHash))
+        }
+        return isValid
     }
 
     suspend fun disablePin() {
@@ -198,12 +220,6 @@ class FinanceRepository(private val database: AppDatabase) {
         )
     }
 
-    private fun hashPin(pin: String): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        val bytes = md.digest("FINPULSE_SALT_$pin".toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
-
     // --- Notifications ---
     val allNotifications: Flow<List<NotificationAlertEntity>> = notificationDao.getAllNotifications()
     suspend fun markAllNotificationsAsRead() = notificationDao.markAllAsRead()
@@ -211,29 +227,6 @@ class FinanceRepository(private val database: AppDatabase) {
     suspend fun insertNotification(notification: NotificationAlertEntity) =
         notificationDao.insertNotification(notification)
 
-    // --- SMS Sync ---
-    suspend fun syncInboxSms(context: Context): SmsSyncReport {
-        return SmsReaderHelper.readAndImportSms(context, transactionDao)
-    }
-
-    suspend fun parseAndInsertSingleSms(body: String, sender: String): ParsedSmsResult {
-        val result = SmsTransactionParser.parse(body, sender)
-        if (result.isValidTransaction && result.transaction != null) {
-            val tx = result.transaction
-            val hash = tx.smsHash ?: ""
-            val existingCount = transactionDao.getCountBySmsHash(hash)
-            if (existingCount == 0) {
-                insertTransaction(tx)
-                return result
-            } else {
-                return ParsedSmsResult(
-                    isValidTransaction = false,
-                    reasonIfNotValid = "Duplicate transaction already exists in database."
-                )
-            }
-        }
-        return result
-    }
 
     // --- Backup & Restore (JSON / Cloud architecture) ---
     suspend fun exportDataAsJson(): String = withContext(Dispatchers.IO) {

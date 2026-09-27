@@ -91,12 +91,12 @@ fun DashboardScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = { onNavigate(AppNavDestination.SMS_SYNC) },
-                        modifier = Modifier.testTag("dashboard_sync_sms_btn")
+                        onClick = { onNavigate(AppNavDestination.STATEMENT_UPLOAD) },
+                        modifier = Modifier.testTag("dashboard_upload_statement_btn")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Sync,
-                            contentDescription = "Sync SMS",
+                            imageVector = Icons.Filled.UploadFile,
+                            contentDescription = "Upload Bank Statement",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -282,10 +282,10 @@ fun DashboardScreen(
                         }
                     )
                     QuickActionButton(
-                        icon = Icons.Filled.Sms,
-                        label = "SMS Sync",
+                        icon = Icons.Filled.UploadFile,
+                        label = "Statement",
                         color = TealSecondary,
-                        onClick = { onNavigate(AppNavDestination.SMS_SYNC) }
+                        onClick = { onNavigate(AppNavDestination.STATEMENT_UPLOAD) }
                     )
                     QuickActionButton(
                         icon = Icons.Filled.AccountBalanceWallet,

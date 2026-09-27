@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">FinPulse</string>
+    <string name="default_web_client_id">935417500679-0mahe4ngs5arbqac6cv1tbd53uerklr5.apps.googleusercontent.com</string>
+    <string name="sign_in_with_google">Continue with Google</string>
 </resources>

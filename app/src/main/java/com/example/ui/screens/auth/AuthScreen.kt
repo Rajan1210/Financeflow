@@ -16,14 +16,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.DarkBg
-import com.example.ui.theme.DarkSurfaceCard
-import com.example.ui.theme.EmeraldPrimary
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.viewmodel.FinanceViewModel
 
@@ -33,12 +33,69 @@ fun AuthScreen(
     onSuccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var enteredPin by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val userProfile by viewModel.userProfile.collectAsState()
-    val isBiometricEnabled = userProfile?.isBiometricEnabled ?: false
 
     val isPinSetupMode = userProfile?.pinHash == null
+
+    // Check biometric hardware capability
+    val isBiometricAvailable = remember(context) {
+        val bm = androidx.biometric.BiometricManager.from(context)
+        val authenticators = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+        bm.canAuthenticate(authenticators) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    // Biometrics should only be displayed if hardware is available, user enabled it, and not setting up PIN for the first time
+    val showBiometrics = isBiometricAvailable && (userProfile?.isBiometricEnabled == true) && !isPinSetupMode
+
+    fun launchBiometricPrompt() {
+        val activity = context as? FragmentActivity ?: return
+        val executor = ContextCompat.getMainExecutor(activity)
+        val prompt = androidx.biometric.BiometricPrompt(
+            activity,
+            executor,
+            object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    viewModel.unlockBiometric()
+                    onSuccess()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                        errorMessage = errString.toString()
+                    }
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    errorMessage = "Biometric not recognized. Please try again or use PIN."
+                }
+            }
+        )
+
+        val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock FinPulse")
+            .setSubtitle("Confirm your biometric to proceed")
+            .setNegativeButtonText("Use PIN")
+            .build()
+
+        prompt.authenticate(promptInfo)
+    }
+
+    // Auto-prompt biometrics once if available and enabled
+    var hasAutoPromptedBiometrics by remember { mutableStateOf(false) }
+    LaunchedEffect(showBiometrics) {
+        if (showBiometrics && !hasAutoPromptedBiometrics) {
+            hasAutoPromptedBiometrics = true
+            launchBiometricPrompt()
+        }
+    }
 
     fun handleDigit(d: String) {
         if (enteredPin.length < 4) {
@@ -103,29 +160,34 @@ fun AuthScreen(
                     imageVector = Icons.Filled.Lock,
                     contentDescription = "Lock",
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(32.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "FinPulse Security",
-                style = MaterialTheme.typography.headlineMedium,
+                text = if (isPinSetupMode) "Create 4-Digit PIN" else "FinPulse Locked",
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = if (isPinSetupMode) "Create a 4-digit PIN to secure your financial data" else "Enter your 4-digit Security PIN",
+                text = if (isPinSetupMode) {
+                    "Set up a 4-digit PIN to secure your financial data on this device"
+                } else {
+                    if (showBiometrics) "Enter your PIN or use biometrics to continue" else "Enter your 4-digit PIN to continue"
+                },
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                modifier = Modifier.padding(horizontal = 24.dp)
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
             // 4 Pin dots
             Row(
@@ -158,12 +220,18 @@ fun AuthScreen(
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Keypad 1-9, 0, Backspace, Biometric
+            // Keypad 1-9, 0, Backspace, Biometric (suppressed if biometrics unavailable)
+            val bottomRow = listOf(
+                if (showBiometrics) "BIO" else "",
+                "0",
+                "DEL"
+            )
+
             val keys = listOf(
                 listOf("1", "2", "3"),
                 listOf("4", "5", "6"),
                 listOf("7", "8", "9"),
-                listOf("BIO", "0", "DEL")
+                bottomRow
             )
 
             keys.forEach { row ->
@@ -174,52 +242,48 @@ fun AuthScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     row.forEach { key ->
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when (key) {
-                                        "BIO", "DEL" -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
-                                        else -> MaterialTheme.colorScheme.surface
-                                    }
-                                )
-                                .clickable {
-                                    when (key) {
-                                        "DEL" -> handleBackspace()
-                                        "BIO" -> {
-                                            if (isBiometricEnabled) {
-                                                viewModel.unlockBiometric()
-                                                onSuccess()
-                                            }
+                        if (key.isEmpty()) {
+                            // Blank placeholder to keep keypad symmetrically aligned
+                            Spacer(modifier = Modifier.size(64.dp))
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when (key) {
+                                            "BIO", "DEL" -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                                            else -> MaterialTheme.colorScheme.surface
                                         }
-                                        else -> handleDigit(key)
+                                    )
+                                    .clickable {
+                                        when (key) {
+                                            "DEL" -> handleBackspace()
+                                            "BIO" -> launchBiometricPrompt()
+                                            else -> handleDigit(key)
+                                        }
                                     }
+                                    .testTag("keypad_$key"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                when (key) {
+                                    "DEL" -> Icon(
+                                        imageVector = Icons.Filled.Backspace,
+                                        contentDescription = "Backspace",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    "BIO" -> Icon(
+                                        imageVector = Icons.Filled.Fingerprint,
+                                        contentDescription = "Biometric Unlock",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    else -> Text(
+                                        text = key,
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
                                 }
-                                .testTag("keypad_$key"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            when (key) {
-                                "DEL" -> Icon(
-                                    imageVector = Icons.Filled.Backspace,
-                                    contentDescription = "Backspace",
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                                "BIO" -> {
-                                    if (isBiometricEnabled) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Fingerprint,
-                                            contentDescription = "Biometric",
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-                                else -> Text(
-                                    text = key,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
                             }
                         }
                     }
@@ -231,7 +295,6 @@ fun AuthScreen(
             if (!isPinSetupMode) {
                 TextButton(
                     onClick = {
-                        // Quick fallback bypass in case user forgot PIN during local session
                         viewModel.disablePin()
                         onSuccess()
                     },

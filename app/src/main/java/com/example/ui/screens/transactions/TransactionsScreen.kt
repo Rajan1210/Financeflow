@@ -419,8 +419,8 @@ fun TransactionDetailDialog(
                     if (!transaction.referenceId.isNullOrBlank()) {
                         DetailRow(label = "Reference ID", value = transaction.referenceId)
                     }
-                    if (transaction.isFromSms) {
-                        DetailRow(label = "Source", value = "Imported from SMS")
+                    if (transaction.isAutoImported) {
+                        DetailRow(label = "Source", value = "Auto-imported")
                     }
                     if (transaction.description.isNotBlank()) {
                         DetailRow(label = "Note", value = transaction.description)

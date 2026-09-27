@@ -46,12 +46,12 @@ enum class AppNavDestination(
 ) {
     DASHBOARD("dashboard", "Home", Icons.Filled.Dashboard, Icons.Outlined.Dashboard),
     TRANSACTIONS("transactions", "Transactions", Icons.Filled.ReceiptLong, Icons.Outlined.ReceiptLong),
-    SMS_SYNC("sms_sync", "SMS Sync", Icons.Filled.Sms, Icons.Outlined.Sms),
     BUDGETS("budgets", "Budgets", Icons.Filled.PieChart, Icons.Outlined.PieChartOutline),
     ACCOUNTS("accounts", "Accounts", Icons.Filled.AccountBalanceWallet, Icons.Outlined.AccountBalanceWallet),
     INVESTMENTS("investments", "Invest", Icons.Filled.TrendingUp, Icons.Outlined.TrendingUp),
     ANALYTICS("analytics", "Analytics", Icons.Filled.BarChart, Icons.Outlined.BarChart),
-    SETTINGS("settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
+    SETTINGS("settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
+    STATEMENT_UPLOAD("statement_upload", "Add Statement", Icons.Filled.UploadFile, Icons.Outlined.UploadFile)
 }
 
 @Composable
@@ -63,8 +63,8 @@ fun FinPulseBottomBar(
     val primaryDestinations = listOf(
         AppNavDestination.DASHBOARD,
         AppNavDestination.TRANSACTIONS,
-        AppNavDestination.SMS_SYNC,
         AppNavDestination.ACCOUNTS,
+        AppNavDestination.BUDGETS,
         AppNavDestination.ANALYTICS
     )
 
@@ -198,7 +198,7 @@ fun TransactionRow(
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    if (transaction.isFromSms) {
+                    if (transaction.isAutoImported) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Box(
                             modifier = Modifier
@@ -207,7 +207,7 @@ fun TransactionRow(
                                 .padding(horizontal = 4.dp, vertical = 1.dp)
                         ) {
                             Text(
-                                text = "SMS",
+                                text = "AUTO",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary

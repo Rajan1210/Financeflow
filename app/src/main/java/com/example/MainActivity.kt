@@ -2,7 +2,7 @@ package com.example
 
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -18,19 +18,20 @@ import com.example.ui.components.AppNavDestination
 import com.example.ui.components.FinPulseBottomBar
 import com.example.ui.screens.accounts.AccountsScreen
 import com.example.ui.screens.analytics.AnalyticsScreen
+import com.example.ui.screens.auth.AuthGateScreen
 import com.example.ui.screens.auth.AuthScreen
 import com.example.ui.screens.budgets.BudgetsScreen
 import com.example.ui.screens.dashboard.DashboardScreen
 import com.example.ui.screens.investments.InvestmentsScreen
 import com.example.ui.screens.settings.SettingsScreen
-import com.example.ui.screens.sms.SmsSyncScreen
+import com.example.ui.screens.statement.StatementUploadScreen
 import com.example.ui.screens.transactions.TransactionDetailDialog
 import com.example.ui.screens.transactions.TransactionsScreen
 import com.example.ui.theme.FinPulseTheme
 import com.example.ui.viewmodel.FinanceViewModel
 import kotlinx.coroutines.flow.collectLatest
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val viewModel: FinanceViewModel by viewModels()
 
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+            val firebaseUser by viewModel.firebaseUser.collectAsStateWithLifecycle()
             val isSessionUnlocked by viewModel.isSessionUnlocked.collectAsStateWithLifecycle()
 
             val systemDark = isSystemInDarkTheme()
@@ -55,19 +57,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // If PIN is enabled and app is locked, present the AuthScreen
-                val isLocked = (userProfile?.isPinEnabled == true) && !isSessionUnlocked
-
-                if (isLocked) {
-                    AuthScreen(
-                        viewModel = viewModel,
-                        onSuccess = { viewModel.unlockBiometric() }
+                // Layer 1: Firebase Account / Local Authentication Gate
+                if (firebaseUser == null) {
+                    AuthGateScreen(
+                        onAuthenticated = { uid, email, isLocal ->
+                            viewModel.onUserAuthenticated(uid, email, isLocal)
+                        }
                     )
                 } else {
-                    MainAppScaffold(
-                        viewModel = viewModel,
-                        snackbarHostState = snackbarHostState
-                    )
+                    // Layer 2: PIN / Biometric App Lock Gate
+                    val isLocked = (userProfile?.isPinEnabled == true) && !isSessionUnlocked
+
+                    if (isLocked) {
+                        AuthScreen(
+                            viewModel = viewModel,
+                            onSuccess = { viewModel.unlockBiometric() }
+                        )
+                    } else {
+                        MainAppScaffold(
+                            viewModel = viewModel,
+                            snackbarHostState = snackbarHostState
+                        )
+                    }
                 }
             }
         }
@@ -108,9 +119,6 @@ fun MainAppScaffold(
                 AppNavDestination.TRANSACTIONS -> TransactionsScreen(
                     viewModel = viewModel
                 )
-                AppNavDestination.SMS_SYNC -> SmsSyncScreen(
-                    viewModel = viewModel
-                )
                 AppNavDestination.ACCOUNTS -> AccountsScreen(
                     viewModel = viewModel
                 )
@@ -125,6 +133,10 @@ fun MainAppScaffold(
                 )
                 AppNavDestination.SETTINGS -> SettingsScreen(
                     viewModel = viewModel
+                )
+                AppNavDestination.STATEMENT_UPLOAD -> StatementUploadScreen(
+                    viewModel = viewModel,
+                    onBack = { currentDestination = AppNavDestination.DASHBOARD }
                 )
             }
         }

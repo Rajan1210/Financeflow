@@ -7,10 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.*
 import com.example.data.repository.FinanceRepository
-import com.example.data.sms.ParsedSmsResult
-import com.example.data.sms.SmsReaderHelper
-import com.example.data.sms.SmsSyncReport
-import com.example.data.sms.SmsTransactionParser
 import com.example.domain.model.BankType
 import com.example.domain.model.InvestmentType
 import com.example.domain.model.TransactionCategory
@@ -28,6 +24,12 @@ enum class DateFilterType {
     THIS_MONTH,
     LAST_MONTH
 }
+
+data class FinPulseUser(
+    val uid: String,
+    val email: String,
+    val isLocal: Boolean = false
+)
 
 data class DashboardMetrics(
     val totalBalance: Double = 0.0,
@@ -95,16 +97,42 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedTypeFilter = MutableStateFlow<TransactionType?>(null)
     val selectedTypeFilter = _selectedTypeFilter.asStateFlow()
 
+    // Authentication State
+    private val _authUser = MutableStateFlow<FinPulseUser?>(null)
+    val authUser = _authUser.asStateFlow()
+    val firebaseUser = _authUser.asStateFlow()
+
     // Authentication & App Lock
     private val _isSessionUnlocked = MutableStateFlow(false)
     val isSessionUnlocked = _isSessionUnlocked.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val current = try {
+                com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+            } catch (e: Exception) {
+                null
+            }
+            if (current != null) {
+                _authUser.value = FinPulseUser(current.uid, current.email ?: "", false)
+                repository.linkFirebaseUser(current.uid, current.email ?: "")
+            } else {
+                val profile = repository.userProfile.first()
+                if (profile?.firebaseUid != null) {
+                    _authUser.value = FinPulseUser(
+                        uid = profile.firebaseUid,
+                        email = profile.email,
+                        isLocal = profile.firebaseUid.startsWith("local_")
+                    )
+                }
+            }
+        }
+    }
 
     // Syncing state
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing = _isSyncing.asStateFlow()
 
-    private val _lastSyncReport = MutableStateFlow<SmsSyncReport?>(null)
-    val lastSyncReport = _lastSyncReport.asStateFlow()
 
     // Status message for Snackbars
     private val _toastMessage = MutableSharedFlow<String>()
@@ -547,43 +575,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // SMS Sync & Test Simulator
-    fun syncSmsInbox(context: Context) {
-        viewModelScope.launch {
-            _isSyncing.value = true
-            val report = repository.syncInboxSms(context)
-            _lastSyncReport.value = report
-            _isSyncing.value = false
-            _toastMessage.emit("SMS Sync: Imported ${report.newTransactionsImported} new transactions")
-        }
-    }
-
-    fun testAndImportSms(smsBody: String, sender: String = "VK-BANK"): ParsedSmsResult {
-        val result = SmsTransactionParser.parse(smsBody, sender)
-        if (result.isValidTransaction && result.transaction != null) {
-            viewModelScope.launch {
-                val res = repository.parseAndInsertSingleSms(smsBody, sender)
-                if (res.isValidTransaction) {
-                    _toastMessage.emit("Imported: ${result.transaction.merchant} ₹${result.transaction.amount}")
-                } else {
-                    _toastMessage.emit(res.reasonIfNotValid ?: "Already imported")
-                }
-            }
-        }
-        return result
-    }
-
-    fun importPresetSmsList() {
-        viewModelScope.launch {
-            var count = 0
-            val presets = SmsReaderHelper.getPresetSmsList()
-            presets.forEach { (sender, body) ->
-                val res = repository.parseAndInsertSingleSms(body, sender)
-                if (res.isValidTransaction) count++
-            }
-            _toastMessage.emit("Imported $count simulated banking SMS transactions")
-        }
-    }
 
     // PIN & Security
     fun setPin(pin: String) {
@@ -608,6 +599,32 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun unlockBiometric() {
         _isSessionUnlocked.value = true
+    }
+
+    fun onUserAuthenticated(uid: String, email: String, isLocal: Boolean = false) {
+        _authUser.value = FinPulseUser(uid, email, isLocal)
+        viewModelScope.launch {
+            repository.linkFirebaseUser(uid, email)
+            if (isLocal) {
+                _toastMessage.emit("Continuing in offline mode")
+            }
+        }
+    }
+
+    fun onFirebaseUserAuthenticated(uid: String, email: String) {
+        onUserAuthenticated(uid, email, isLocal = false)
+    }
+
+    fun signOutFromFirebase() {
+        try {
+            com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+        } catch (_: Exception) {}
+        _authUser.value = null
+        _isSessionUnlocked.value = false
+        viewModelScope.launch {
+            repository.clearFirebaseUser()
+            _toastMessage.emit("Logged out successfully")
+        }
     }
 
     fun disablePin() {

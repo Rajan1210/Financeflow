@@ -38,10 +38,13 @@ enum class BankType(val displayName: String, val shortCode: String) {
     HDFC("HDFC Bank", "HDFC"),
     ICICI("ICICI Bank", "ICICI"),
     AXIS("Axis Bank", "AXIS"),
-    PNB("Punjab National Bank", "PNB"),
     KOTAK("Kotak Mahindra", "KOTAK"),
+    PNB("Punjab National Bank", "PNB"),
+    BOB("Bank of Baroda", "BOB"),
+    IDFC("IDFC First Bank", "IDFC"),
+    CITI("Citibank", "CITI"),
     CASH("Cash Wallet", "CASH"),
-    OTHER("Other Bank / Wallet", "OTHER");
+    OTHER("Other / Not Listed", "OTHER");
 
     companion object {
         fun fromString(str: String?): BankType {
@@ -52,8 +55,11 @@ enum class BankType(val displayName: String, val shortCode: String) {
                 upper.contains("HDFC") -> HDFC
                 upper.contains("ICICI") -> ICICI
                 upper.contains("AXIS") -> AXIS
-                upper.contains("PNB") -> PNB
                 upper.contains("KOTAK") -> KOTAK
+                upper.contains("PNB") -> PNB
+                upper.contains("BARODA") || upper.contains("BOB") -> BOB
+                upper.contains("IDFC") -> IDFC
+                upper.contains("CITI") -> CITI
                 upper.contains("CASH") -> CASH
                 else -> OTHER
             }

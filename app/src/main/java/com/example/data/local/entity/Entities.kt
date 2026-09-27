@@ -29,7 +29,11 @@ data class TransactionEntity(
     val smsBody: String? = null,
     val isFromSms: Boolean = false,
     val smsHash: String? = null
-)
+) {
+    // Repurposed generic accessors for statement/auto-imports
+    val isAutoImported: Boolean get() = isFromSms
+    val importHash: String? get() = smsHash
+}
 
 @Entity(tableName = "accounts")
 data class AccountEntity(
@@ -89,6 +93,7 @@ data class UserProfileEntity(
     val id: Long = 1,
     val username: String = "User",
     val email: String = "user@finpulse.app",
+    val firebaseUid: String? = null,
     val pinHash: String? = null,
     val isPinEnabled: Boolean = false,
     val isBiometricEnabled: Boolean = false,

@@ -39,12 +39,14 @@ fun SettingsScreen(
     val context = LocalContext.current
     val userProfile by viewModel.userProfile.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
+    val firebaseUser by viewModel.firebaseUser.collectAsState()
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var showCloudSyncDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
     var exportedJsonText by remember { mutableStateOf("") }
 
     val isPinSet = userProfile?.isPinEnabled == true
@@ -74,6 +76,44 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 90.dp)
         ) {
+            // Account & Session Section
+            item {
+                Text(
+                    text = "Account & Session",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column {
+                        SettingRow(
+                            icon = Icons.Filled.AccountCircle,
+                            title = firebaseUser?.email ?: userProfile?.email ?: "Signed In User",
+                            subtitle = if (firebaseUser != null) {
+                                if (firebaseUser?.isLocal == true) "Offline Account • Stored locally" else "UID: ${firebaseUser?.uid?.take(12)}... • Firebase Linked"
+                            } else "Local Session",
+                            onClick = {}
+                        )
+
+                        Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                        SettingRow(
+                            icon = Icons.Filled.Logout,
+                            title = "Log Out",
+                            subtitle = "Sign out of your current account session",
+                            onClick = { showLogoutDialog = true }
+                        )
+                    }
+                }
+            }
+
             // Preferences Section
             item {
                 Text(
@@ -152,6 +192,13 @@ fun SettingsScreen(
                         Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         // Biometrics
+                        val isDeviceBiometricCapable = remember(context) {
+                            val bm = androidx.biometric.BiometricManager.from(context)
+                            val authenticators = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+                            bm.canAuthenticate(authenticators) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+                        }
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -163,7 +210,7 @@ fun SettingsScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Fingerprint,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                    tint = if (isDeviceBiometricCapable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Column {
@@ -173,15 +220,20 @@ fun SettingsScreen(
                                         fontWeight = FontWeight.Medium
                                     )
                                     Text(
-                                        text = "Unlock with fingerprint or face",
+                                        text = if (isDeviceBiometricCapable) {
+                                            "Unlock with fingerprint or face"
+                                        } else {
+                                            "Biometric unavailable or not enrolled on this device"
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                             Switch(
-                                checked = isBiometricEnabled,
-                                onCheckedChange = { viewModel.toggleBiometric(it) }
+                                checked = isBiometricEnabled && isDeviceBiometricCapable,
+                                onCheckedChange = { viewModel.toggleBiometric(it) },
+                                enabled = isDeviceBiometricCapable
                             )
                         }
                     }
@@ -517,6 +569,31 @@ fun SettingsScreen(
             },
             confirmButton = {
                 Button(onClick = { showCloudSyncDialog = false }) { Text("Got It") }
+            }
+        )
+    }
+
+    // Logout Confirmation Dialog
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text(text = "Log Out", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to sign out of your Firebase account?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.signOutFromFirebase()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed)
+                ) {
+                    Text("Log Out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
